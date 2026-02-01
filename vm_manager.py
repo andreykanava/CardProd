@@ -39,7 +39,7 @@ class VmManager:
         self,
         conn_uri: str = "qemu:///system",
         work_dir: str | Path = "vms",
-        ubuntu_image_url: str = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
+        ubuntu_image_url: str = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img", # https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img   - for arm
         base_image_name: str = "ubuntu.qcow2",
         host_dir_env: str = "VMS_HOST_DIR",
     ):
