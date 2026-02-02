@@ -24,6 +24,7 @@ if [ ! -f "$KEY_PRIV" ]; then
 fi
 
 NODE_PUBKEY="$(cat "$KEY_PUB")"
+export NODE_PUBKEY
 
 echo "[*] Joining controller..."
 JOIN_JSON="$(python3 - <<PY
