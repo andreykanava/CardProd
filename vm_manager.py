@@ -25,13 +25,8 @@ class VmManager:
     """
     Libvirt VM manager with Ubuntu cloud-image + cloud-init (NoCloud).
 
-    Docker note:
-      - This process may run inside a container.
-      - Libvirt/QEMU runs on the HOST.
-      - Therefore, domain XML must reference HOST filesystem paths.
-
     Paths:
-      - work_dir: where THIS process writes files (container path when in Docker)
+      - work_dir: where THIS process writes files
       - host_dir: same directory as seen on HOST (set via env VMS_HOST_DIR)
     """
 
@@ -39,16 +34,13 @@ class VmManager:
         self,
         conn_uri: str = "qemu:///system",
         work_dir: str | Path = "vms",
-        ubuntu_image_url: str = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img", # https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-arm64.img   - for arm
+        ubuntu_image_url: str = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img",
         base_image_name: str = "ubuntu.qcow2",
         host_dir_env: str = "VMS_HOST_DIR",
     ):
         self.conn_uri = conn_uri
-
-        # Always absolute; prevents weird relative path behavior
         self.work_dir = Path(work_dir).expanduser().resolve()
 
-        # Host-visible path to the same directory. Required when running inside Docker.
         host_dir_value = os.environ.get(host_dir_env)
         self.host_dir = (
             Path(host_dir_value).expanduser().resolve()
@@ -58,7 +50,6 @@ class VmManager:
 
         self.ubuntu_image_url = ubuntu_image_url
 
-        # Container-view directories (where files are created)
         self.images_dir = self.work_dir / "images"
         self.configs_dir = self.work_dir / "configs"
         self.instances_dir = self.work_dir / "instances"
@@ -123,18 +114,11 @@ class VmManager:
     # ---------- overlay disk ----------
 
     def create_overlay_disk(self, cfg: VmConfig) -> Path:
-        """
-        Creates overlay qcow2 disk for the VM.
-
-        CRITICAL: backing file path MUST be absolute, otherwise qemu-img treats it relative
-        to the overlay location and you get:
-          vms/instances/<vm>/vms/images/ubuntu.qcow2
-        """
         self.ensure_directories()
         vm_dir = self.container_vm_dir(cfg)
         vm_dir.mkdir(parents=True, exist_ok=True)
 
-        base = self.base_image_path.resolve()  # ABSOLUTE PATH
+        base = self.base_image_path.resolve()
         overlay = self.container_overlay_path(cfg)
 
         if overlay.exists():
@@ -151,7 +135,7 @@ class VmManager:
                 "qemu-img", "create",
                 "-f", "qcow2",
                 "-F", "qcow2",
-                "-b", str(base),          # ABSOLUTE backing file
+                "-b", str(base),
                 str(overlay),
                 size,
             ],
@@ -166,9 +150,6 @@ class VmManager:
     # ---------- cloud-init seed ----------
 
     def build_cloud_init_seed(self, cfg: VmConfig) -> Path:
-        """
-        Builds seed.iso from configs/user-data and configs/meta-data using cloud-localds.
-        """
         self.ensure_directories()
         vm_dir = self.container_vm_dir(cfg)
         vm_dir.mkdir(parents=True, exist_ok=True)
@@ -218,13 +199,9 @@ class VmManager:
             return False
 
     def destroy_domain(self, name: str) -> None:
-        """
-        Stop and undefine domain if present.
-        """
         try:
             dom = self.conn.lookupByName(name)
         except libvirt.libvirtError:
-            # silent - normal when domain does not exist
             return
 
         if dom.isActive():
@@ -237,9 +214,6 @@ class VmManager:
     # ---------- domain XML ----------
 
     def render_domain_xml(self, cfg: VmConfig) -> str:
-        """
-        Domain XML MUST reference host paths (host_dir) because qemu runs on host.
-        """
         host_overlay = self.host_overlay_path(cfg)
         host_seed = self.host_seed_path(cfg)
 
@@ -279,15 +253,6 @@ class VmManager:
     # ---------- create & start ----------
 
     def create_and_start(self, cfg: VmConfig, recreate: bool = False) -> libvirt.virDomain:
-        """
-        Full pipeline:
-          - download base image
-          - ensure network active
-          - optional recreate (destroy existing)
-          - create overlay disk
-          - build seed.iso
-          - define + start domain
-        """
         self.ensure_directories()
         self.download_base_image()
         self.ensure_network_active(cfg.network_name)
@@ -295,7 +260,6 @@ class VmManager:
         if recreate:
             self.destroy_domain(cfg.name)
 
-        # Create files in work_dir (container view)
         self.create_overlay_disk(cfg)
         self.build_cloud_init_seed(cfg)
 
@@ -335,3 +299,67 @@ class VmManager:
         xml = dom.XMLDesc(0)
         m = re.search(r"<mac address=['\"]([^'\"]+)['\"]", xml)
         return m.group(1).lower() if m else None
+
+    # =======================
+    #   ДОП. МЕТОДЫ ДЛЯ API
+    # =======================
+
+    def get_domain(self, name: str) -> libvirt.virDomain:
+        try:
+            return self.conn.lookupByName(name)
+        except libvirt.libvirtError as e:
+            raise KeyError(f"Domain not found: {name}") from e
+
+    def start_vm(self, name: str) -> None:
+        dom = self.get_domain(name)
+        if dom.isActive() == 0:
+            dom.create()
+
+    def stop_vm(self, name: str) -> None:
+        dom = self.get_domain(name)
+        if dom.isActive() == 1:
+            dom.destroy()
+
+    def status_vm(self, name: str) -> dict:
+        dom = self.get_domain(name)
+        is_active = dom.isActive() == 1
+
+        state, _reason = dom.state()
+        state_map = {
+            libvirt.VIR_DOMAIN_NOSTATE: "nostate",
+            libvirt.VIR_DOMAIN_RUNNING: "running",
+            libvirt.VIR_DOMAIN_BLOCKED: "blocked",
+            libvirt.VIR_DOMAIN_PAUSED: "paused",
+            libvirt.VIR_DOMAIN_SHUTDOWN: "shutdown",
+            libvirt.VIR_DOMAIN_SHUTOFF: "shutoff",
+            libvirt.VIR_DOMAIN_CRASHED: "crashed",
+            libvirt.VIR_DOMAIN_PMSUSPENDED: "pmsuspended",
+        }
+
+        return {
+            "name": dom.name(),
+            "active": is_active,
+            "state": state_map.get(state, str(state)),
+            "uuid": dom.UUIDString(),
+        }
+
+    def delete_vm(self, cfg: VmConfig, delete_files: bool = True) -> None:
+        # 1) destroy + undefine
+        self.destroy_domain(cfg.name)
+
+        # 2) delete instance files
+        if delete_files:
+            vm_dir = self.container_vm_dir(cfg)
+            if vm_dir.exists():
+                for p in sorted(vm_dir.rglob("*"), reverse=True):
+                    if p.is_file():
+                        p.unlink(missing_ok=True)
+                    elif p.is_dir():
+                        try:
+                            p.rmdir()
+                        except OSError:
+                            pass
+                try:
+                    vm_dir.rmdir()
+                except OSError:
+                    pass
