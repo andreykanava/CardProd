@@ -80,7 +80,7 @@ PrivateKey = ${PRIVKEY}
 [Peer]
 PublicKey = ${CTRL_PUB}
 Endpoint = ${ENDPOINT}
-AllowedIPs = ${ALLOWED}
+AllowedIPs = 10.50.0.0/24
 PersistentKeepalive = 25
 EOF
 

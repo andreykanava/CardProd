@@ -2,3 +2,6 @@
 /srv/vms/images
 /srv/vmsinstances
 .env
+srv/vms/instances/testvm-1/disk.qcow2
+.gitignore
+srv/vms/instances/testvm-1/seed.iso
